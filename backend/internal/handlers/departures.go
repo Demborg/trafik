@@ -45,10 +45,10 @@ func (h *Handler) Departures(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		views = append(views, departureView{
-			Line:          d.Line,
+			Line:          d.Line.Designation,
 			Destination:   d.Destination,
 			Minutes:       minutes,
-			TransportType: d.TransportType,
+			TransportType: d.Line.TransportMode,
 		})
 	}
 

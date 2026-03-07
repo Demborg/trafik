@@ -3,6 +3,14 @@
 > Task runner for the trafik monorepo. Run `mask <command> <subcommand>` from the project root.
 > Requires: mask, go, node/npm, platformio (pio), docker, gcloud
 
+## dev
+
+> Start both backend and frontend for local development.
+
+```bash
+mask backend dev & mask frontend dev & wait
+```
+
 ## backend
 
 > Commands for the Go backend service.

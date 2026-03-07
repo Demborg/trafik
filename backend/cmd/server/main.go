@@ -10,17 +10,12 @@ import (
 )
 
 func main() {
-	apiKey := os.Getenv("TRAFIKLAB_API_KEY")
-	if apiKey == "" {
-		log.Fatal("TRAFIKLAB_API_KEY is required")
-	}
-
 	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
 	if allowedOrigin == "" {
-		allowedOrigin = "https://trafik.demborg.se"
+		allowedOrigin = "*"
 	}
 
-	client := sl.NewClient(apiKey)
+	client := sl.NewClient()
 	h := handlers.New(client)
 
 	mux := http.NewServeMux()

@@ -8,6 +8,38 @@ import (
 	"time"
 )
 
+// slTime parses the SL API's timezone-less timestamps as Stockholm local time.
+type slTime struct{ time.Time }
+
+var stockholmLoc *time.Location
+
+func init() {
+	var err error
+	stockholmLoc, err = time.LoadLocation("Europe/Stockholm")
+	if err != nil {
+		stockholmLoc = time.UTC
+	}
+}
+
+func (t *slTime) UnmarshalJSON(b []byte) error {
+	s := string(b)
+	if s == "null" {
+		return nil
+	}
+	if len(s) >= 2 && s[0] == '"' {
+		s = s[1 : len(s)-1]
+	}
+	parsed, err := time.ParseInLocation("2006-01-02T15:04:05", s, stockholmLoc)
+	if err != nil {
+		parsed, err = time.Parse(time.RFC3339, s)
+		if err != nil {
+			return err
+		}
+	}
+	t.Time = parsed
+	return nil
+}
+
 // BagarmossenSiteID is the Trafiklab site ID for Bagarmossen station.
 // TODO: verify against https://transport.integration.sl.se/v1/sites?expand=true
 const BagarmossenSiteID = "9192"
@@ -15,23 +47,25 @@ const BagarmossenSiteID = "9192"
 const baseURL = "https://transport.integration.sl.se/v1"
 
 type Client struct {
-	apiKey     string
 	httpClient *http.Client
 }
 
-func NewClient(apiKey string) *Client {
+func NewClient() *Client {
 	return &Client{
-		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
+type line struct {
+	Designation   string `json:"designation"`
+	TransportMode string `json:"transport_mode"`
+}
+
 type Departure struct {
-	Line          string    `json:"line"`
-	Destination   string    `json:"destination"`
-	ScheduledTime time.Time `json:"scheduled"`
-	ExpectedTime  time.Time `json:"expected"`
-	TransportType string    `json:"transport_type"`
+	Line          line   `json:"line"`
+	Destination   string `json:"destination"`
+	ScheduledTime slTime `json:"scheduled"`
+	ExpectedTime  slTime `json:"expected"`
 }
 
 // GetDepartures fetches live departures for the given site ID from the SL Transport API.
@@ -44,8 +78,6 @@ func (c *Client) GetDepartures(ctx context.Context, siteID string) ([]Departure,
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err

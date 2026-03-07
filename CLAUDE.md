@@ -33,7 +33,7 @@ Use the `trafik-tasks` skill for task runner operations.
 
 Single endpoint: `GET /departures` returns `{departures: [...], suggested_sleep_seconds: N}`
 
-Env vars: `TRAFIKLAB_API_KEY` (required), `ALLOWED_ORIGIN`, `PORT`
+Env vars: `ALLOWED_ORIGIN` (default `*`), `PORT` (default `8080`)
 
 ### Frontend (`/frontend`) — Svelte 5
 - Single-page dashboard at `trafik.demborg.se` (GitHub Pages)
