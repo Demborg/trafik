@@ -37,6 +37,7 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: projects/489043292627/locations/global/workloadIdentityPools/github/providers/my-repo
+          project_id: trafik-489607
 
       - run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
