@@ -58,5 +58,4 @@ jobs:
           image: ${{ env.IMAGE }}:${{ github.sha }}
           flags: --allow-unauthenticated
           env_vars: |
-            TRAFIKLAB_API_KEY=${{ secrets.TRAFIKLAB_API_KEY }}
             ALLOWED_ORIGIN=https://trafik.demborg.se

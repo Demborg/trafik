@@ -49,7 +49,7 @@ The firmware is built using PlatformIO.
 # Open the /firmware folder in VS Code with the PlatformIO extension installed.
 # Copy the example config and fill in your credentials:
 cp include/config.example.h include/config.h
-# Edit config.h to add your Wi-Fi credentials, backend URL, and Trafiklab API key.
+# Edit config.h to add your Wi-Fi credentials and backend URL.
 # Then build and flash via USB using the PlatformIO toolbar or:
 pio run --target upload
 ```
