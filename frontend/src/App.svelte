@@ -14,11 +14,12 @@
   }
 
   interface GroupView {
-    type: string
+    label: string
     lines: LineView[]
   }
 
   let groups: GroupView[] = $state([])
+  let weather: string | null = $state(null)
   let error: string | null = $state(null)
   let loading = $state(true)
   let nextRefreshIn: number | null = $state(null)
@@ -26,6 +27,15 @@
 
   function minutesUntil(ts: number): number {
     return Math.floor((ts - now) / 60)
+  }
+
+  function formatDepartures(minutes: number[]): string {
+    if (minutes.length === 0) return ''
+    const hasNow = minutes[0] === 0
+    const rest = hasNow ? minutes.slice(1) : minutes
+    if (hasNow && rest.length === 0) return 'Nu'
+    if (hasNow) return `Nu, ${rest.join(', ')} min`
+    return `${minutes.join(', ')} min`
   }
 
   function formatTime(unixSec: number): string {
@@ -40,6 +50,7 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       groups = data.groups
+      weather = data.weather ?? null
       error = null
       if (data.suggested_sleep_seconds) {
         scheduleRefresh(data.suggested_sleep_seconds)
@@ -67,22 +78,21 @@
     setInterval(() => { now = Math.floor(Date.now() / 1000) }, 1000)
     fetchDepartures()
   })
-
-  function formatType(t: string) {
-    return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()
-  }
 </script>
 
 <main>
   <h1>Bagarmossen <span class="clock">{formatTime(now)}</span></h1>
+  {#if weather !== null}
+    <p class="weather">{weather}</p>
+  {/if}
   {#if loading}
-    <p>Loading…</p>
+    <p>Laddar…</p>
   {:else if error}
     <p class="error">{error}</p>
   {:else}
     {#each groups as group}
       <section>
-        <h2>{formatType(group.type)}</h2>
+        <h2>{group.label}</h2>
         {#each group.lines as l}
           {#each l.destinations as dest}
             {@const upcoming = dest.departures.map(minutesUntil).filter(m => m >= 0)}
@@ -90,7 +100,7 @@
               <div class="row">
                 <span class="line">{l.line}</span>
                 <span class="destination">{dest.destination}</span>
-                <span class="times">{upcoming.join(', ')} min</span>
+                <span class="times">{formatDepartures(upcoming)}</span>
               </div>
             {/if}
           {/each}
@@ -99,7 +109,7 @@
     {/each}
   {/if}
   {#if nextRefreshIn !== null}
-    <p class="refresh">refresh in {nextRefreshIn}s</p>
+    <p class="refresh">uppdatering om {nextRefreshIn}s</p>
   {/if}
 </main>
 
@@ -116,6 +126,7 @@
     align-items: baseline;
   }
   .clock { font-size: 1rem; font-weight: normal; color: #555; }
+  .weather { font-size: 0.85rem; color: #666; margin: -0.75rem 0 0.5rem; }
   h2 {
     font-size: 0.85rem;
     text-transform: uppercase;

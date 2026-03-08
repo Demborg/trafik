@@ -28,6 +28,7 @@ void updateDisplay(const char* json) {
                 for (JsonVariant ts : dest["departures"].as<JsonArray>()) {
                     int minutes = (int)((ts.as<int64_t>() - (int64_t)now) / 60);
                     if (minutes >= 0) {
+                        // "Nu" when minutes == 0, otherwise "<N> min".
                         // TODO: add to display buffer.
                         (void)minutes;
                     }

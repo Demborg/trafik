@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/demborg/trafik/backend/internal/sl"
@@ -28,29 +30,78 @@ type lineView struct {
 }
 
 type groupView struct {
-	Type  string     `json:"type"`
+	Label string     `json:"label"`
 	Lines []lineView `json:"lines"`
 }
 
 type departuresResponse struct {
 	Groups                []groupView `json:"groups"`
+	Weather               string      `json:"weather,omitempty"`
 	SuggestedSleepSeconds int         `json:"suggested_sleep_seconds"`
 	ServerTime            int64       `json:"server_time"` // unix timestamp for client clock sync
 }
 
+var typeOrder = map[string]int{
+	"METRO": 0,
+	"TRAIN": 1,
+	"TRAM":  2,
+	"BUS":   3,
+	"FERRY": 4,
+}
+
+var typeLabels = map[string]string{
+	"METRO": "Tunnelbana",
+	"TRAIN": "Pendeltåg",
+	"TRAM":  "Spårvagn",
+	"BUS":   "Buss",
+	"FERRY": "Färja",
+}
+
+func typeLabel(tp string) string {
+	if label, ok := typeLabels[strings.ToUpper(tp)]; ok {
+		return label
+	}
+	if len(tp) > 0 {
+		return strings.ToUpper(tp[:1]) + strings.ToLower(tp[1:])
+	}
+	return tp
+}
+
 func (h *Handler) Departures(w http.ResponseWriter, r *http.Request) {
-	departures, err := h.sl.GetDepartures(r.Context(), sl.BagarmossenSiteID)
-	if err != nil {
-		log.Printf("error fetching departures: %v", err)
+	// Fetch departures and weather concurrently.
+	type depResult struct {
+		departures []sl.Departure
+		err        error
+	}
+	depCh := make(chan depResult, 1)
+	go func() {
+		d, err := h.sl.GetDepartures(r.Context(), sl.BagarmossenSiteID)
+		depCh <- depResult{d, err}
+	}()
+
+	weatherCh := make(chan string, 1)
+	go func() {
+		w, err := fetchWeather()
+		if err != nil {
+			log.Printf("weather fetch error: %v", err)
+			w = ""
+		}
+		weatherCh <- w
+	}()
+
+	dr := <-depCh
+	if dr.err != nil {
+		log.Printf("error fetching departures: %v", dr.err)
 		http.Error(w, "upstream error", http.StatusBadGateway)
 		return
 	}
 
 	now := time.Now()
-	groups := buildGroups(departures, now)
+	groups := buildGroups(dr.departures, now)
 
 	resp := departuresResponse{
 		Groups:                groups,
+		Weather:               <-weatherCh,
 		SuggestedSleepSeconds: suggestedSleep(groups, now),
 		ServerTime:            now.Unix(),
 	}
@@ -60,10 +111,10 @@ func (h *Handler) Departures(w http.ResponseWriter, r *http.Request) {
 }
 
 // buildGroups groups departures by transport type → line → destination,
-// preserving first-seen order so earliest departures come first.
+// sorted by type priority (Tunnelbana first).
 func buildGroups(departures []sl.Departure, now time.Time) []groupView {
-	var groups []groupView
-	groupIdx := map[string]int{}
+	var typeOrder_ []string
+	groupData := map[string]*groupView{}
 
 	for _, d := range departures {
 		if d.ExpectedTime.Before(now) {
@@ -71,44 +122,55 @@ func buildGroups(departures []sl.Departure, now time.Time) []groupView {
 		}
 
 		tp := d.Line.TransportMode
+		if _, ok := groupData[tp]; !ok {
+			typeOrder_ = append(typeOrder_, tp)
+			gv := &groupView{Label: typeLabel(tp)}
+			groupData[tp] = gv
+		}
+		g := groupData[tp]
 
-		gi, ok := groupIdx[tp]
-		if !ok {
-			gi = len(groups)
-			groupIdx[tp] = gi
-			groups = append(groups, groupView{Type: tp})
+		li := -1
+		for i, l := range g.Lines {
+			if l.Line == d.Line.Designation {
+				li = i
+				break
+			}
+		}
+		if li < 0 {
+			li = len(g.Lines)
+			g.Lines = append(g.Lines, lineView{Line: d.Line.Designation})
 		}
 
-		lineIdx := map[string]int{}
-		for i, l := range groups[gi].Lines {
-			lineIdx[l.Line] = i
+		di := -1
+		for i, dest := range g.Lines[li].Destinations {
+			if dest.Destination == d.Destination {
+				di = i
+				break
+			}
 		}
-
-		li, ok := lineIdx[d.Line.Designation]
-		if !ok {
-			li = len(groups[gi].Lines)
-			groups[gi].Lines = append(groups[gi].Lines, lineView{Line: d.Line.Designation})
-		}
-
-		destIdx := map[string]int{}
-		for i, dest := range groups[gi].Lines[li].Destinations {
-			destIdx[dest.Destination] = i
-		}
-
-		di, ok := destIdx[d.Destination]
-		if !ok {
-			di = len(groups[gi].Lines[li].Destinations)
-			groups[gi].Lines[li].Destinations = append(
-				groups[gi].Lines[li].Destinations,
+		if di < 0 {
+			di = len(g.Lines[li].Destinations)
+			g.Lines[li].Destinations = append(
+				g.Lines[li].Destinations,
 				destinationView{Destination: d.Destination},
 			)
 		}
 
-		groups[gi].Lines[li].Destinations[di].Departures = append(
-			groups[gi].Lines[li].Destinations[di].Departures, d.ExpectedTime.Unix(),
+		g.Lines[li].Destinations[di].Departures = append(
+			g.Lines[li].Destinations[di].Departures, d.ExpectedTime.Unix(),
 		)
 	}
 
+	sort.SliceStable(typeOrder_, func(i, j int) bool {
+		pi := typeOrder[strings.ToUpper(typeOrder_[i])]
+		pj := typeOrder[strings.ToUpper(typeOrder_[j])]
+		return pi < pj
+	})
+
+	groups := make([]groupView, 0, len(typeOrder_))
+	for _, tp := range typeOrder_ {
+		groups = append(groups, *groupData[tp])
+	}
 	return groups
 }
 
@@ -116,8 +178,8 @@ func buildGroups(departures []sl.Departure, now time.Time) []groupView {
 // waking a couple of minutes before the next departure.
 func suggestedSleep(groups []groupView, now time.Time) int {
 	const (
-		minSleep    = 30
-		maxSleep    = 600
+		minSleep     = 30
+		maxSleep     = 600
 		wakeAheadSec = 2 * 60
 	)
 	nowUnix := now.Unix()
