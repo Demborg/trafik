@@ -31,10 +31,12 @@ npm i
 
 ### install firmware
 
-> Install PlatformIO.
+> Install PlatformIO using the official installer script.
 
 ```bash
-pip install platformio
+curl -fsSL -o get-platformio.py https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py && python3 get-platformio.py && rm get-platformio.py
+mkdir -p ~/.local/bin
+ln -sf ~/.platformio/penv/bin/pio ~/.local/bin/pio
 ```
 
 ## dev
