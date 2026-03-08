@@ -41,8 +41,7 @@ func (t *slTime) UnmarshalJSON(b []byte) error {
 }
 
 // BagarmossenSiteID is the Trafiklab site ID for Bagarmossen station.
-// TODO: verify against https://transport.integration.sl.se/v1/sites?expand=true
-const BagarmossenSiteID = "9192"
+const BagarmossenSiteID = "9141"
 
 const baseURL = "https://transport.integration.sl.se/v1"
 
