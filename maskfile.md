@@ -44,7 +44,7 @@ ln -sf ~/.platformio/penv/bin/pio ~/.local/bin/pio
 > Start both backend and frontend for local development.
 
 ```bash
-mask backend dev & mask frontend dev & wait
+mask dev backend & mask dev frontend & wait
 ```
 
 ### dev backend
