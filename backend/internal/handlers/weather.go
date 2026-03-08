@@ -15,10 +15,13 @@ const (
 
 var weatherHTTPClient = &http.Client{Timeout: 5 * time.Second}
 
+// fetchWeather fetches current conditions from SMHI's point forecast API.
+// SMHI is the Swedish meteorological authority and provides high-resolution
+// forecasts for Sweden.
 func fetchWeather() (string, error) {
 	url := fmt.Sprintf(
-		"https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,weather_code",
-		bagarmossenLat, bagarmossenLon,
+		"https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/%.4f/lat/%.4f/data.json",
+		bagarmossenLon, bagarmossenLat,
 	)
 	resp, err := weatherHTTPClient.Get(url)
 	if err != nil {
@@ -27,45 +30,73 @@ func fetchWeather() (string, error) {
 	defer resp.Body.Close()
 
 	var result struct {
-		Current struct {
-			Temperature float64 `json:"temperature_2m"`
-			WeatherCode int     `json:"weather_code"`
-		} `json:"current"`
+		TimeSeries []struct {
+			Parameters []struct {
+				Name   string    `json:"name"`
+				Values []float64 `json:"values"`
+			} `json:"parameters"`
+		} `json:"timeSeries"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", err
 	}
-
-	temp := int(math.Round(result.Current.Temperature))
-	label := weatherCodeLabel(result.Current.WeatherCode)
-	if label != "" {
-		return fmt.Sprintf("%d° %s", temp, label), nil
+	if len(result.TimeSeries) == 0 {
+		return "", fmt.Errorf("empty SMHI response")
 	}
-	return fmt.Sprintf("%d°", temp), nil
+
+	// First entry is the nearest forecast hour.
+	var temp float64
+	var symbol int
+	for _, p := range result.TimeSeries[0].Parameters {
+		if p.Name == "t" && len(p.Values) > 0 {
+			temp = p.Values[0]
+		}
+		if p.Name == "Wsymb2" && len(p.Values) > 0 {
+			symbol = int(p.Values[0])
+		}
+	}
+
+	label := smhiSymbolLabel(symbol)
+	if label != "" {
+		return fmt.Sprintf("%d° %s", int(math.Round(temp)), label), nil
+	}
+	return fmt.Sprintf("%d°", int(math.Round(temp))), nil
 }
 
-func weatherCodeLabel(code int) string {
-	switch {
-	case code == 0:
+// smhiSymbolLabel maps SMHI Wsymb2 weather symbols to Swedish descriptions.
+// https://opendata.smhi.se/apidocs/metfcst/parameters.html
+func smhiSymbolLabel(symbol int) string {
+	switch symbol {
+	case 1:
 		return "klart"
-	case code <= 2:
+	case 2:
 		return "lätt molnigt"
-	case code <= 3:
+	case 3:
+		return "halvklart"
+	case 4:
+		return "halvmulnet"
+	case 5:
 		return "molnigt"
-	case code <= 49:
+	case 6:
+		return "mulet"
+	case 7:
 		return "dimma"
-	case code <= 57:
-		return "duggregn"
-	case code <= 67:
-		return "regn"
-	case code <= 77:
-		return "snö"
-	case code <= 82:
+	case 8, 9, 10:
 		return "regnskurar"
-	case code <= 86:
+	case 11:
+		return "åskskurar"
+	case 12, 13, 14:
+		return "snöblandad regnskur"
+	case 15, 16, 17:
 		return "snöbyar"
-	case code <= 99:
+	case 18, 19, 20:
+		return "regn"
+	case 21:
 		return "åska"
+	case 22, 23, 24:
+		return "snöblandat regn"
+	case 25, 26, 27:
+		return "snöfall"
 	default:
 		return ""
 	}
