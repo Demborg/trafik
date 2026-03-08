@@ -8,19 +8,7 @@ Hallway transit sign monorepo — an e-ink departure board for SL (Stockholm tra
 
 ## Task Runner
 
-All common tasks use `mask` (reads `maskfile.md`). Run from the project root:
-
-```bash
-mask backend dev       # start Go server locally
-mask backend test      # run Go tests
-mask backend build     # build Docker image
-mask backend deploy    # deploy to Cloud Run
-mask frontend dev      # start Svelte dev server
-mask frontend build    # production build
-mask firmware build    # compile firmware (PlatformIO)
-mask firmware flash    # compile + flash via USB
-mask firmware monitor  # serial monitor at 115200 baud
-```
+All common tasks use `mask` (reads `maskfile.md`). Run from the project root. See `maskfile.md` for available commands.
 
 Use the `trafik-tasks` skill for task runner operations.
 
