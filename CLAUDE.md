@@ -38,6 +38,6 @@ Env vars: `ALLOWED_ORIGIN` (default `*`), `PORT` (default `8080`)
 
 ## Deployment
 
-- Backend: Google Cloud Run (`europe-north1`), `distroless/static` container. CI deploys on push to `main`.
+- Backend: Google Cloud Run (`europe-north2`), `distroless/static` container. CI deploys on push to `main`.
 - Frontend: GitHub Pages, CI builds and deploys on push to `main`.
 - Database: Google Cloud Firestore (device config + battery telemetry) — not yet wired into the code.

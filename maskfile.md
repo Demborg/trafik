@@ -132,7 +132,7 @@ mask deploy backend & mask deploy firmware & wait
 ```bash
 gcloud run deploy trafik-backend \
   --source ./backend \
-  --region europe-north1 \
+  --region europe-north2 \
   --allow-unauthenticated
 ```
 
@@ -158,7 +158,7 @@ mask logs backend & mask logs firmware & wait
 > Tail live logs from the Cloud Run backend.
 
 ```bash
-gcloud run services logs tail trafik-backend --region europe-north1
+gcloud run services logs tail trafik-backend --region europe-north2
 ```
 
 ### logs firmware

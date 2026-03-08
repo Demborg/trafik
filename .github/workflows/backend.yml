@@ -8,9 +8,9 @@ on:
     paths: ['backend/**', '.github/workflows/backend.yml']
 
 env:
-  REGION: europe-north1
+  REGION: europe-north2
   SERVICE: trafik-backend
-  IMAGE: europe-north1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/trafik/backend
+  IMAGE: europe-north2-docker.pkg.dev/trafik-489607/trafik/backend
 
 jobs:
   test:
@@ -36,8 +36,7 @@ jobs:
       - id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: projects/489043292627/locations/global/workloadIdentityPools/github/providers/my-repo
 
       - run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
