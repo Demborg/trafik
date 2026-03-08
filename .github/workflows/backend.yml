@@ -63,4 +63,4 @@ jobs:
           image: ${{ env.IMAGE }}:${{ github.sha }}
           flags: --allow-unauthenticated
           env_vars: |
-            ALLOWED_ORIGIN=https://trafik.demborg.se
+            ALLOWED_ORIGIN=https://demborg.se
