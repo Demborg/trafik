@@ -22,7 +22,7 @@ jobs:
       - run: npm run build
         working-directory: frontend
         env:
-          VITE_BACKEND_URL: ${{ vars.BACKEND_URL }}
+          VITE_BACKEND_URL: https://trafik-backend-489043292627.europe-north2.run.app
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'
         with:
