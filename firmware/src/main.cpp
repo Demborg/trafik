@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <sys/time.h>
 
 #include "config.h"
 
@@ -13,7 +14,27 @@ RTC_DATA_ATTR char cachedPayload[512];
 // TODO: initialise GxEPD2 display once pin mapping is confirmed on hardware.
 // Partial refresh support needs to be validated on the specific panel revision.
 void updateDisplay(const char* json) {
-    (void)json; // placeholder
+    JsonDocument doc;
+    if (deserializeJson(doc, json) != DeserializationError::Ok) return;
+
+    time_t now = time(NULL);
+
+    // For each departure timestamp compute minutes remaining; skip past ones.
+    // TODO: render to GxEPD2 display.
+    JsonArray groups = doc["groups"].as<JsonArray>();
+    for (JsonObject group : groups) {
+        for (JsonObject line : group["lines"].as<JsonArray>()) {
+            for (JsonObject dest : line["destinations"].as<JsonArray>()) {
+                for (JsonVariant ts : dest["departures"].as<JsonArray>()) {
+                    int minutes = (int)((ts.as<int64_t>() - (int64_t)now) / 60);
+                    if (minutes >= 0) {
+                        // TODO: add to display buffer.
+                        (void)minutes;
+                    }
+                }
+            }
+        }
+    }
 }
 
 // --- Network ---
@@ -47,8 +68,15 @@ PollResult pollBackend() {
 
     JsonDocument doc;
     deserializeJson(doc, body);
-    int sleep = doc["suggested_sleep_seconds"] | POLL_FALLBACK_SLEEP_SECONDS;
 
+    // Sync RTC clock from server_time.
+    int64_t serverTime = doc["server_time"].as<int64_t>();
+    if (serverTime > 0) {
+        struct timeval tv = { .tv_sec = (time_t)serverTime, .tv_usec = 0 };
+        settimeofday(&tv, nullptr);
+    }
+
+    int sleep = doc["suggested_sleep_seconds"] | POLL_FALLBACK_SLEEP_SECONDS;
     return {true, sleep};
 }
 

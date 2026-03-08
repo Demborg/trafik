@@ -14,5 +14,6 @@
 // Fallback sleep duration if the network poll fails (seconds)
 #define POLL_FALLBACK_SLEEP_SECONDS 120
 
-// Sleep between display-only refresh cycles (seconds)
-#define DISPLAY_REFRESH_SLEEP_SECONDS 30
+// Sleep between display-only refresh cycles (seconds).
+// Keep at 60 so each display wake corresponds to exactly one elapsed minute.
+#define DISPLAY_REFRESH_SLEEP_SECONDS 60

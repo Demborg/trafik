@@ -18,8 +18,8 @@ func New(client *sl.Client) *Handler {
 }
 
 type destinationView struct {
-	Destination string `json:"destination"`
-	Minutes     []int  `json:"minutes"`
+	Destination string  `json:"destination"`
+	Departures  []int64 `json:"departures"` // unix timestamps
 }
 
 type lineView struct {
@@ -35,6 +35,7 @@ type groupView struct {
 type departuresResponse struct {
 	Groups                []groupView `json:"groups"`
 	SuggestedSleepSeconds int         `json:"suggested_sleep_seconds"`
+	ServerTime            int64       `json:"server_time"` // unix timestamp for client clock sync
 }
 
 func (h *Handler) Departures(w http.ResponseWriter, r *http.Request) {
@@ -50,7 +51,8 @@ func (h *Handler) Departures(w http.ResponseWriter, r *http.Request) {
 
 	resp := departuresResponse{
 		Groups:                groups,
-		SuggestedSleepSeconds: suggestedSleep(groups),
+		SuggestedSleepSeconds: suggestedSleep(groups, now),
+		ServerTime:            now.Unix(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -60,13 +62,11 @@ func (h *Handler) Departures(w http.ResponseWriter, r *http.Request) {
 // buildGroups groups departures by transport type → line → destination,
 // preserving first-seen order so earliest departures come first.
 func buildGroups(departures []sl.Departure, now time.Time) []groupView {
-	// Use index maps to preserve insertion order via parallel slices.
 	var groups []groupView
 	groupIdx := map[string]int{}
 
 	for _, d := range departures {
-		minutes := int(d.ExpectedTime.Sub(now).Minutes())
-		if minutes < 0 {
+		if d.ExpectedTime.Before(now) {
 			continue
 		}
 
@@ -104,8 +104,8 @@ func buildGroups(departures []sl.Departure, now time.Time) []groupView {
 			)
 		}
 
-		groups[gi].Lines[li].Destinations[di].Minutes = append(
-			groups[gi].Lines[li].Destinations[di].Minutes, minutes,
+		groups[gi].Lines[li].Destinations[di].Departures = append(
+			groups[gi].Lines[li].Destinations[di].Departures, d.ExpectedTime.Unix(),
 		)
 	}
 
@@ -114,20 +114,20 @@ func buildGroups(departures []sl.Departure, now time.Time) []groupView {
 
 // suggestedSleep returns a recommended deep-sleep duration in seconds,
 // waking a couple of minutes before the next departure.
-func suggestedSleep(groups []groupView) int {
+func suggestedSleep(groups []groupView, now time.Time) int {
 	const (
 		minSleep    = 30
-		maxSleep    = 300
-		wakeAheadMin = 2
+		maxSleep    = 600
+		wakeAheadSec = 2 * 60
 	)
-	// Find the earliest departure across all groups.
-	first := -1
+	nowUnix := now.Unix()
+	first := int64(-1)
 	for _, g := range groups {
 		for _, l := range g.Lines {
 			for _, dest := range l.Destinations {
-				if len(dest.Minutes) > 0 {
-					if first < 0 || dest.Minutes[0] < first {
-						first = dest.Minutes[0]
+				if len(dest.Departures) > 0 {
+					if first < 0 || dest.Departures[0] < first {
+						first = dest.Departures[0]
 					}
 				}
 			}
@@ -136,7 +136,7 @@ func suggestedSleep(groups []groupView) int {
 	if first < 0 {
 		return maxSleep
 	}
-	sleep := (first - wakeAheadMin) * 60
+	sleep := int(first - nowUnix - wakeAheadSec)
 	if sleep < minSleep {
 		return minSleep
 	}
