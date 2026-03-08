@@ -46,6 +46,8 @@ jobs:
           password: ${{ steps.auth.outputs.auth_token }}
 
       - uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
 
       - uses: docker/build-push-action@v6
         with:
