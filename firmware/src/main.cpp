@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <SPI.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -11,33 +12,28 @@
 
 #include "config.h"
 
-// RTC memory survives deep sleep — used to track cycle count and cache data.
-RTC_DATA_ATTR int bootCount = 0;
-RTC_DATA_ATTR char cachedPayload[4096];
-
 GxEPD2_BW<GxEPD2_426_GDEQ0426T82, GxEPD2_426_GDEQ0426T82::HEIGHT / 4> display(
     GxEPD2_426_GDEQ0426T82(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
 
 // --- Display ---
 
-// Layout constants
 static const int MARGIN        = 12;
-static const int COL_LINE      = MARGIN;         // line number column x
-static const int COL_LINE_W    = 72;             // width reserved for line number
-static const int COL_DEST      = COL_LINE + COL_LINE_W + 8;  // destination x
+static const int COL_LINE      = MARGIN;
+static const int COL_LINE_W    = 72;
+static const int COL_DEST      = COL_LINE + COL_LINE_W + 8;
 static const int COL_DEST_W    = 350;
-static const int COL_T1        = COL_DEST + COL_DEST_W + 8;  // first time column x
-static const int COL_T_W       = 100;            // width of each time column
-static const int ROW_H_MAIN    = 42;             // row height for 18pt rows
-static const int ROW_H_GROUP   = 32;             // row height for group headers
-static const int MAX_TIMES     = 3;              // departure times shown per dest
+static const int COL_T1        = COL_DEST + COL_DEST_W + 8;
+static const int COL_T_W       = 100;
+static const int ROW_H_MAIN    = 42;
+static const int ROW_H_GROUP   = 32;
+static const int MAX_TIMES     = 3;
 
 static void drawMinutes(int x, int w, int y, int minutes) {
     String label = (minutes == 0) ? "Nu" : (String(minutes) + " min");
     int16_t tx, ty;
     uint16_t tw, th;
     display.getTextBounds(label, 0, 0, &tx, &ty, &tw, &th);
-    display.setCursor(x + w - tw, y);  // right-align within column
+    display.setCursor(x + w - tw, y);
     display.print(label);
 }
 
@@ -46,7 +42,6 @@ static void drawContent(JsonDocument& doc, time_t now) {
 
     int y = MARGIN;
 
-    // Weather — top-right corner in small font
     const char* weather = doc["weather"] | "";
     if (weather[0] != '\0') {
         display.setFont(&FreeSans9pt7b);
@@ -61,14 +56,12 @@ static void drawContent(JsonDocument& doc, time_t now) {
     for (JsonObject group : groups) {
         if (y > display.height() - ROW_H_GROUP) break;
 
-        // Group label (e.g. "Tunnelbana", "Buss")
         display.setFont(&FreeSansBold12pt7b);
         display.setTextColor(GxEPD_BLACK);
         y += ROW_H_GROUP - 4;
         display.setCursor(MARGIN, y);
         display.print(group["label"].as<const char*>());
         y += 4;
-        // Separator line
         display.drawFastHLine(MARGIN, y, display.width() - 2 * MARGIN, GxEPD_BLACK);
         y += 6;
 
@@ -78,7 +71,6 @@ static void drawContent(JsonDocument& doc, time_t now) {
             for (JsonObject dest : line["destinations"].as<JsonArray>()) {
                 if (y > display.height() - ROW_H_MAIN) break;
 
-                // Collect up to MAX_TIMES future departure minutes
                 int times[MAX_TIMES];
                 int count = 0;
                 for (JsonVariant ts : dest["departures"].as<JsonArray>()) {
@@ -94,11 +86,9 @@ static void drawContent(JsonDocument& doc, time_t now) {
                 display.setFont(&FreeSansBold18pt7b);
                 display.setTextColor(GxEPD_BLACK);
 
-                // Line number
                 display.setCursor(COL_LINE, baseline);
                 display.print(lineNum);
 
-                // Destination — truncate if too wide
                 const char* destName = dest["destination"] | "";
                 int16_t tx, ty; uint16_t tw, th;
                 display.getTextBounds(destName, 0, 0, &tx, &ty, &tw, &th);
@@ -106,7 +96,6 @@ static void drawContent(JsonDocument& doc, time_t now) {
                 if ((int)tw <= COL_DEST_W) {
                     display.print(destName);
                 } else {
-                    // Print characters until we'd overflow
                     String s(destName);
                     while (s.length() > 0) {
                         display.getTextBounds(s.c_str(), 0, 0, &tx, &ty, &tw, &th);
@@ -116,7 +105,6 @@ static void drawContent(JsonDocument& doc, time_t now) {
                     display.print(s);
                 }
 
-                // Departure times
                 for (int i = 0; i < count; i++) {
                     drawMinutes(COL_T1 + i * COL_T_W, COL_T_W, baseline, times[i]);
                 }
@@ -125,7 +113,7 @@ static void drawContent(JsonDocument& doc, time_t now) {
             }
         }
 
-        y += 6;  // gap between groups
+        y += 6;
     }
 }
 
@@ -133,11 +121,20 @@ void updateDisplay(const char* json) {
     if (!json || json[0] == '\0') return;
 
     JsonDocument doc;
-    if (deserializeJson(doc, json) != DeserializationError::Ok) return;
+    if (deserializeJson(doc, json) != DeserializationError::Ok) {
+        Serial.println("JSON parse failed");
+        return;
+    }
+
+    int64_t serverTime = doc["server_time"].as<int64_t>();
+    if (serverTime > 0) {
+        struct timeval tv = { .tv_sec = (time_t)serverTime, .tv_usec = 0 };
+        settimeofday(&tv, nullptr);
+    }
 
     time_t now = time(NULL);
 
-    display.init(115200, true, 2, false);
+    display.init(0, true, 10, false);
     display.setRotation(0);
     display.setFullWindow();
 
@@ -149,78 +146,46 @@ void updateDisplay(const char* json) {
     display.hibernate();
 }
 
-// --- Network ---
-bool connectWiFi() {
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) {
-        delay(500);
-    }
-    return WiFi.status() == WL_CONNECTED;
-}
-
-struct PollResult {
-    bool    success;
-    int     suggestedSleepSeconds;
-};
-
-PollResult pollBackend() {
-    HTTPClient http;
-    http.begin(BACKEND_URL);
-    int code = http.GET();
-
-    if (code != HTTP_CODE_OK) {
-        http.end();
-        return {false, POLL_FALLBACK_SLEEP_SECONDS};
-    }
-
-    String body = http.getString();
-    http.end();
-
-    body.toCharArray(cachedPayload, sizeof(cachedPayload));
-
-    JsonDocument doc;
-    deserializeJson(doc, body);
-
-    // Sync RTC clock from server_time.
-    int64_t serverTime = doc["server_time"].as<int64_t>();
-    if (serverTime > 0) {
-        struct timeval tv = { .tv_sec = (time_t)serverTime, .tv_usec = 0 };
-        settimeofday(&tv, nullptr);
-    }
-
-    int sleep = doc["suggested_sleep_seconds"] | POLL_FALLBACK_SLEEP_SECONDS;
-    return {true, sleep};
-}
-
 // --- Main ---
+
 void setup() {
     Serial.begin(115200);
-    bootCount++;
+    delay(10000);
+    Serial.println("\n=== Trafik Display ===");
 
-    bool isNetworkCycle = (bootCount % NETWORK_POLL_EVERY_N_CYCLES == 0)
-                       || (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED);
+    // Power on display
+    pinMode(EPD_PWR, OUTPUT);
+    digitalWrite(EPD_PWR, HIGH);
 
-    int sleepSeconds = DISPLAY_REFRESH_SLEEP_SECONDS;
+    // Init SPI
+    SPI.begin(EPD_SCK, -1, EPD_MOSI, EPD_CS);
 
-    if (isNetworkCycle) {
-        if (connectWiFi()) {
-            PollResult result = pollBackend();
-            WiFi.disconnect(true);
-            WiFi.mode(WIFI_OFF);
-            if (result.success) {
-                sleepSeconds = result.suggestedSleepSeconds;
-            } else {
-                sleepSeconds = POLL_FALLBACK_SLEEP_SECONDS;
-            }
-        }
+    // Connect WiFi
+    Serial.printf("Connecting to %s", WIFI_SSID);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
     }
-
-    updateDisplay(cachedPayload);
-
-    esp_sleep_enable_timer_wakeup((uint64_t)sleepSeconds * 1000000ULL);
-    esp_deep_sleep_start();
+    Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
 }
 
 void loop() {
-    // Never reached — all logic runs in setup() before deep sleep.
+    Serial.println("Fetching departures...");
+    HTTPClient http;
+    http.begin(BACKEND_URL);
+    int code = http.GET();
+    Serial.printf("HTTP %d\n", code);
+
+    if (code == HTTP_CODE_OK) {
+        String body = http.getString();
+        Serial.printf("Got %d bytes, updating display...\n", body.length());
+        updateDisplay(body.c_str());
+        Serial.println("Display updated!");
+    } else {
+        Serial.printf("Error: %s\n", http.errorToString(code).c_str());
+    }
+    http.end();
+
+    delay(60000);
 }
