@@ -41,15 +41,15 @@ U8G2_FOR_ADAFRUIT_GFX u8g2;
 
 // --- Display ---
 
-static const int MARGIN        = 12;
+static const int MARGIN        = 16;
 static const int COL_LINE      = MARGIN;
-static const int COL_LINE_W    = 60;
+static const int COL_LINE_W    = 70;
 static const int COL_DEST      = COL_LINE + COL_LINE_W;
-static const int COL_DEST_W    = 380;
+static const int COL_DEST_W    = 430;
 static const int COL_T1        = COL_DEST + COL_DEST_W;
-static const int COL_T_W       = 110;
-static const int ROW_H_MAIN    = 42;
-static const int ROW_H_GROUP   = 32;
+static const int COL_T_W       = 90;
+static const int ROW_H_MAIN    = 54;
+static const int ROW_H_GROUP   = 40;
 static const int MAX_TIMES     = 3;
 
 static void drawMinutesU8(int x, int w, int y, int minutes) {
@@ -57,7 +57,7 @@ static void drawMinutesU8(int x, int w, int y, int minutes) {
     if (minutes == 0) {
         strcpy(label, "Nu");
     } else {
-        snprintf(label, sizeof(label), "%d min", minutes);
+        snprintf(label, sizeof(label), "%d", minutes);
     }
     int tw = u8g2.getUTF8Width(label);
     u8g2.setCursor(x + w - tw - 4, y);
@@ -71,27 +71,57 @@ static void drawContent(JsonDocument& doc, time_t now) {
 
     int y = MARGIN;
 
-    // Weather — top-right corner
+    // Time & date — top-left
+    {
+        struct tm tm;
+        localtime_r(&now, &tm);
+        char timeBuf[6];
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", tm.tm_hour, tm.tm_min);
+        char dateBuf[16];
+        snprintf(dateBuf, sizeof(dateBuf), "%d/%d", tm.tm_mday, tm.tm_mon + 1);
+
+        u8g2.setFont(u8g2_font_helvB24_te);
+        int timeW = u8g2.getUTF8Width(timeBuf);
+        u8g2.setCursor(MARGIN, MARGIN + 28);
+        u8g2.print(timeBuf);
+
+        u8g2.setFont(u8g2_font_helvR14_te);
+        u8g2.setCursor(MARGIN + timeW + 8, MARGIN + 28);
+        u8g2.print(dateBuf);
+    }
+
+    // Weather — top-right corner, large
     const char* weather = doc["weather"] | "";
     if (weather[0] != '\0') {
-        u8g2.setFont(u8g2_font_helvR12_te);
+        u8g2.setFont(u8g2_font_helvB24_te);
         int tw = u8g2.getUTF8Width(weather);
-        u8g2.setCursor(display.width() - MARGIN - tw, MARGIN + 14);
+        u8g2.setCursor(display.width() - MARGIN - tw, MARGIN + 28);
         u8g2.print(weather);
     }
+
+    y = MARGIN + 36;
 
     JsonArray groups = doc["groups"].as<JsonArray>();
     for (JsonObject group : groups) {
         if (y > display.height() - ROW_H_GROUP) break;
 
         // Group label
-        u8g2.setFont(u8g2_font_helvB14_te);
+        u8g2.setFont(u8g2_font_helvB18_te);
         y += ROW_H_GROUP - 4;
         u8g2.setCursor(MARGIN, y);
         u8g2.print(group["label"].as<const char*>());
         y += 4;
         display.drawFastHLine(MARGIN, y, display.width() - 2 * MARGIN, GxEPD_BLACK);
         y += 6;
+
+        // "min" label right-aligned just below the separator
+        u8g2.setFont(u8g2_font_helvR12_te);
+        {
+            const char* minLabel = "min";
+            int tw = u8g2.getUTF8Width(minLabel);
+            u8g2.setCursor(display.width() - MARGIN - tw, y + 12);
+            u8g2.print(minLabel);
+        }
 
         for (JsonObject line : group["lines"].as<JsonArray>()) {
             const char* lineNum = line["line"] | "";
@@ -117,12 +147,12 @@ static void drawContent(JsonDocument& doc, time_t now) {
                 u8g2.print(lineNum);
 
                 // Destination
-                u8g2.setFont(u8g2_font_helvR18_te);
+                u8g2.setFont(u8g2_font_helvR24_te);
                 u8g2.setCursor(COL_DEST, baseline);
                 u8g2.print(dest["destination"].as<const char*>());
 
                 // Departure times
-                u8g2.setFont(u8g2_font_helvB18_te);
+                u8g2.setFont(u8g2_font_helvB24_te);
                 for (int i = 0; i < count; i++) {
                     drawMinutesU8(COL_T1 + i * COL_T_W, COL_T_W, baseline, times[i]);
                 }
