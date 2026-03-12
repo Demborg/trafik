@@ -15,6 +15,7 @@
 #define EPD_DC    8
 #define EPD_RST   9
 #define EPD_BUSY  5
+#define EPD_PWR   4
 
 // How many display-refresh wake cycles between full network polls.
 // e.g. 3 = poll network, then refresh display twice, then poll again.
