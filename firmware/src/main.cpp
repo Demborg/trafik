@@ -174,6 +174,10 @@ void updateDisplay(const char* json) {
         return;
     }
 
+    // Stockholm timezone (CET/CEST with automatic DST)
+    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+    tzset();
+
     int64_t serverTime = doc["server_time"].as<int64_t>();
     if (serverTime > 0) {
         struct timeval tv = { .tv_sec = (time_t)serverTime, .tv_usec = 0 };
