@@ -10,6 +10,19 @@
 
 #include "config.h"
 
+#define BAT_SENSE_PIN 3
+
+static float readBatteryVoltage() {
+    uint32_t mv = analogReadMilliVolts(BAT_SENSE_PIN);
+    return (mv * 2) / 1000.0f;
+}
+
+static int calculateBatteryPercentage(float voltage) {
+    if (voltage >= 4.15f) return 100;
+    if (voltage <= 3.30f) return 0;
+    return (int)((voltage - 3.30f) / (4.15f - 3.30f) * 100.0f);
+}
+
 GxEPD2_BW<GxEPD2_426_GDEQ0426T82, GxEPD2_426_GDEQ0426T82::HEIGHT> display(
     GxEPD2_426_GDEQ0426T82(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
 
@@ -153,11 +166,22 @@ static void drawGroups(JsonDocument& doc, time_t now) {
     }
 }
 
-static void drawContent(JsonDocument& doc, time_t now) {
+static void drawBattery(float vBat, int pBat) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d%%", pBat);
+    
+    u8g2.setFont(u8g2_font_helvR14_te);
+    int textWidth = u8g2.getUTF8Width(buf);
+    u8g2.setCursor((display.width() - textWidth) / 2, MARGIN + 28);
+    u8g2.print(buf);
+}
+
+static void drawContent(JsonDocument& doc, time_t now, float vBat, int pBat) {
     u8g2.setForegroundColor(GxEPD_BLACK);
     u8g2.setBackgroundColor(GxEPD_WHITE);
 
     drawHeader(now);
+    drawBattery(vBat, pBat);
     drawWeather(doc);
     drawGroups(doc, now);
 }
@@ -176,14 +200,14 @@ static void prepareDisplay() {
     display.setFullWindow();
 }
 
-static void renderFrame(JsonDocument& doc, time_t now) {
+static void renderFrame(JsonDocument& doc, time_t now, float vBat, int pBat) {
     display.fillScreen(GxEPD_WHITE);
-    drawContent(doc, now);
+    drawContent(doc, now, vBat, pBat);
     display.display(false);
     waveshareRefresh();
 }
 
-void updateDisplay(const char* json) {
+void updateDisplay(const char* json, float vBat, int pBat) {
     if (!json || json[0] == '\0') return;
 
     JsonDocument doc;
@@ -199,7 +223,7 @@ void updateDisplay(const char* json) {
     time_t now = time(NULL);
 
     prepareDisplay();
-    renderFrame(doc, now);
+    renderFrame(doc, now, vBat, pBat);
     display.hibernate();
 }
 
@@ -214,16 +238,22 @@ static void connectToWiFi() {
 }
 
 static void fetchDepartures() {
+    float vBat = readBatteryVoltage();
+    int pBat = calculateBatteryPercentage(vBat);
+    Serial.printf("Battery: %.2fV (%d%%)\n", vBat, pBat);
+
     Serial.println("Fetching departures...");
     HTTPClient http;
-    http.begin(BACKEND_URL);
+    char url[256];
+    snprintf(url, sizeof(url), "%s?v_bat=%.2f&p_bat=%d", BACKEND_URL, vBat, pBat);
+    http.begin(url);
     int code = http.GET();
     Serial.printf("HTTP %d\n", code);
 
     if (code == HTTP_CODE_OK) {
         String body = http.getString();
         Serial.printf("Got %d bytes, updating display...\n", body.length());
-        updateDisplay(body.c_str());
+        updateDisplay(body.c_str(), vBat, pBat);
         Serial.println("Display updated!");
     } else {
         Serial.printf("Error: %s\n", http.errorToString(code).c_str());
