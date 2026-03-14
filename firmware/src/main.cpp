@@ -165,6 +165,27 @@ static void drawContent(JsonDocument& doc, time_t now) {
     }
 }
 
+static void syncSystemTime(JsonDocument& doc) {
+    int64_t serverTime = doc["server_time"].as<int64_t>();
+    if (serverTime > 0) {
+        struct timeval tv = { .tv_sec = (time_t)serverTime, .tv_usec = 0 };
+        settimeofday(&tv, nullptr);
+    }
+}
+
+static void prepareDisplay() {
+    display.init(0, true, 10, false);
+    display.setRotation(0);
+    display.setFullWindow();
+}
+
+static void renderFrame(JsonDocument& doc, time_t now) {
+    display.fillScreen(GxEPD_WHITE);
+    drawContent(doc, now);
+    display.display(false);
+    waveshareRefresh();
+}
+
 void updateDisplay(const char* json) {
     if (!json || json[0] == '\0') return;
 
@@ -174,36 +195,14 @@ void updateDisplay(const char* json) {
         return;
     }
 
-    // Stockholm timezone (CET/CEST with automatic DST)
     setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
     tzset();
 
-    int64_t serverTime = doc["server_time"].as<int64_t>();
-    if (serverTime > 0) {
-        struct timeval tv = { .tv_sec = (time_t)serverTime, .tv_usec = 0 };
-        settimeofday(&tv, nullptr);
-    }
-
+    syncSystemTime(doc);
     time_t now = time(NULL);
 
-    display.init(0, true, 10, false);
-    display.setRotation(0);
-    display.setFullWindow();
-
-    // 1. Clear the local ESP32 memory buffer
-    display.fillScreen(GxEPD_WHITE);
-
-    // 2. Purely functional drawing step (mutates local RAM only)
-    drawContent(doc, now);
-
-    // 3. Transfer the buffer to the display's onboard SRAM and refresh
-    // NOTE: GxEPD2's display() both transfers and refreshes.
-    display.display(false);
-
-    // 4. Explicitly fire your custom Waveshare hardware update sequence
-    // This re-triggers the refresh with custom flags if needed.
-    waveshareRefresh();
-
+    prepareDisplay();
+    renderFrame(doc, now);
     display.hibernate();
 }
 
