@@ -15,7 +15,7 @@ func main() {
 	ctx := context.Background()
 	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
 	if projectID == "" {
-		projectID = "trafik-489043292627"
+		projectID = "trafik-489607"
 	}
 
 	var fs *firestore.Client
