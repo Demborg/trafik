@@ -37,6 +37,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /departures", h.Departures)
+	mux.HandleFunc("GET /battery", h.Battery)
 
 	port := os.Getenv("PORT")
 	if port == "" {
