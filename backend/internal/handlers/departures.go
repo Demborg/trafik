@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -47,6 +48,11 @@ type departuresResponse struct {
 	ServerTime            int64       `json:"server_time"` // unix timestamp for client clock sync
 }
 
+type departuresResult struct {
+	departures []sl.Departure
+	err        error
+}
+
 var typeOrder = map[string]int{
 	"METRO": 0,
 	"TRAIN": 1,
@@ -74,48 +80,17 @@ func typeLabel(tp string) string {
 }
 
 func (h *Handler) Departures(w http.ResponseWriter, r *http.Request) {
-	// Log battery telemetry if provided.
-	vBatStr := r.URL.Query().Get("v_bat")
-	pBatStr := r.URL.Query().Get("p_bat")
-	if (vBatStr != "" || pBatStr != "") && h.firestore != nil {
-		vBat, _ := strconv.ParseFloat(vBatStr, 64)
-		pBat, _ := strconv.Atoi(pBatStr)
-		log.Printf("battery telemetry: v_bat=%.2fV, p_bat=%d%%", vBat, pBat)
+	vBat, _ := strconv.ParseFloat(r.URL.Query().Get("v_bat"), 64)
+	pBat, _ := strconv.Atoi(r.URL.Query().Get("p_bat"))
 
-		go func() {
-			_, _, err := h.firestore.Collection("battery_telemetry").Add(r.Context(), map[string]interface{}{
-				"v_bat":     vBat,
-				"p_bat":     pBat,
-				"timestamp": firestore.ServerTimestamp,
-			})
-			if err != nil {
-				log.Printf("failed to log battery telemetry to firestore: %v", err)
-			}
-		}()
-	}
+	telemetryDone := h.logTelemetryAsync(vBat, pBat)
+	departuresCh := h.fetchDeparturesAsync(r.Context())
+	weatherCh := h.fetchWeatherAsync(r.Context())
 
-	// Fetch departures and weather concurrently.
-	type depResult struct {
-		departures []sl.Departure
-		err        error
-	}
-	depCh := make(chan depResult, 1)
-	go func() {
-		d, err := h.sl.GetDepartures(r.Context(), sl.BagarmossenSiteID)
-		depCh <- depResult{d, err}
-	}()
+	dr := <-departuresCh
+	weather := <-weatherCh
+	<-telemetryDone
 
-	weatherCh := make(chan string, 1)
-	go func() {
-		w, err := fetchWeather()
-		if err != nil {
-			log.Printf("weather fetch error: %v", err)
-			w = ""
-		}
-		weatherCh <- w
-	}()
-
-	dr := <-depCh
 	if dr.err != nil {
 		log.Printf("error fetching departures: %v", dr.err)
 		http.Error(w, "upstream error", http.StatusBadGateway)
@@ -127,13 +102,58 @@ func (h *Handler) Departures(w http.ResponseWriter, r *http.Request) {
 
 	resp := departuresResponse{
 		Groups:                groups,
-		Weather:               <-weatherCh,
+		Weather:               weather,
 		SuggestedSleepSeconds: suggestedSleep(groups, now),
 		ServerTime:            now.Unix(),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handler) logTelemetryAsync(vBat float64, pBat int) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if (vBat == 0 && pBat == 0) || h.firestore == nil {
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		_, _, err := h.firestore.Collection("battery_telemetry").Add(ctx, map[string]interface{}{
+			"v_bat":     vBat,
+			"p_bat":     pBat,
+			"timestamp": firestore.ServerTimestamp,
+		})
+		if err != nil {
+			log.Printf("failed to log battery telemetry to firestore: %v", err)
+		}
+	}()
+	return done
+}
+
+func (h *Handler) fetchDeparturesAsync(ctx context.Context) <-chan departuresResult {
+	ch := make(chan departuresResult, 1)
+	go func() {
+		d, err := h.sl.GetDepartures(ctx, sl.BagarmossenSiteID)
+		ch <- departuresResult{d, err}
+	}()
+	return ch
+}
+
+func (h *Handler) fetchWeatherAsync(ctx context.Context) <-chan string {
+	ch := make(chan string, 1)
+	go func() {
+		w, err := fetchWeather()
+		if err != nil {
+			log.Printf("weather fetch error: %v", err)
+			w = ""
+		}
+		ch <- w
+	}()
+	return ch
 }
 
 // buildGroups groups departures by transport type → line → destination,
