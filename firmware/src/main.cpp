@@ -13,33 +13,7 @@
 GxEPD2_BW<GxEPD2_426_GDEQ0426T82, GxEPD2_426_GDEQ0426T82::HEIGHT> display(
     GxEPD2_426_GDEQ0426T82(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
 
-// Send a raw command+data to the display via SPI (bypasses GxEPD2)
-static void epdCommand(uint8_t cmd, const uint8_t* data, size_t len) {
-    digitalWrite(EPD_CS, LOW);
-    digitalWrite(EPD_DC, LOW);
-    SPI.transfer(cmd);
-    digitalWrite(EPD_DC, HIGH);
-    for (size_t i = 0; i < len; i++) SPI.transfer(data[i]);
-    digitalWrite(EPD_CS, HIGH);
-}
-
-// Trigger a Waveshare-style full refresh (without the 0x21/0x40 bypass RED)
-static void waveshareRefresh() {
-    // Wait for any previous operation
-    while (digitalRead(EPD_BUSY) == HIGH) delay(1);
-
-    uint8_t updateCtrl[] = {0xF7};
-    epdCommand(0x22, updateCtrl, 1);
-    epdCommand(0x20, nullptr, 0);
-
-    // Wait for refresh to complete
-    delay(100);
-    while (digitalRead(EPD_BUSY) == HIGH) delay(10);
-}
-
 U8G2_FOR_ADAFRUIT_GFX u8g2;
-
-// --- Display ---
 
 static const int MARGIN        = 16;
 static const int COL_LINE      = MARGIN;
@@ -52,76 +26,108 @@ static const int ROW_H_MAIN    = 54;
 static const int ROW_H_GROUP   = 40;
 static const int MAX_TIMES     = 3;
 
-static void drawMinutesU8(int x, int w, int y, int minutes) {
+static void epdCommand(uint8_t cmd, const uint8_t* data, size_t len) {
+    digitalWrite(EPD_CS, LOW);
+    digitalWrite(EPD_DC, LOW);
+    SPI.transfer(cmd);
+    digitalWrite(EPD_DC, HIGH);
+    for (size_t i = 0; i < len; i++) SPI.transfer(data[i]);
+    digitalWrite(EPD_CS, HIGH);
+}
+
+static void waveshareRefresh() {
+    while (digitalRead(EPD_BUSY) == HIGH) delay(1);
+
+    uint8_t updateCtrl[] = {0xF7};
+    epdCommand(0x22, updateCtrl, 1);
+    epdCommand(0x20, nullptr, 0);
+
+    delay(100);
+    while (digitalRead(EPD_BUSY) == HIGH) delay(10);
+}
+
+static void drawMinutes(int x, int w, int y, int minutes) {
     char label[16];
     if (minutes == 0) {
         strcpy(label, "Nu");
     } else {
         snprintf(label, sizeof(label), "%d", minutes);
     }
-    int tw = u8g2.getUTF8Width(label);
-    u8g2.setCursor(x + w - tw - 4, y);
+    int textWidth = u8g2.getUTF8Width(label);
+    u8g2.setCursor(x + w - textWidth - 4, y);
     u8g2.print(label);
 }
 
-static void drawContent(JsonDocument& doc, time_t now) {
-    display.fillScreen(GxEPD_WHITE);
-    u8g2.setForegroundColor(GxEPD_BLACK);
-    u8g2.setBackgroundColor(GxEPD_WHITE);
+static void drawHeader(time_t now) {
+    struct tm tm;
+    localtime_r(&now, &tm);
+    char timeBuf[6];
+    snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", tm.tm_hour, tm.tm_min);
+    char dateBuf[16];
+    snprintf(dateBuf, sizeof(dateBuf), "%d/%d", tm.tm_mday, tm.tm_mon + 1);
 
-    int y = MARGIN;
+    u8g2.setFont(u8g2_font_helvB24_te);
+    int timeWidth = u8g2.getUTF8Width(timeBuf);
+    u8g2.setCursor(MARGIN, MARGIN + 28);
+    u8g2.print(timeBuf);
 
-    // Time & date — top-left
-    {
-        struct tm tm;
-        localtime_r(&now, &tm);
-        char timeBuf[6];
-        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", tm.tm_hour, tm.tm_min);
-        char dateBuf[16];
-        snprintf(dateBuf, sizeof(dateBuf), "%d/%d", tm.tm_mday, tm.tm_mon + 1);
+    u8g2.setFont(u8g2_font_helvR14_te);
+    u8g2.setCursor(MARGIN + timeWidth + 8, MARGIN + 28);
+    u8g2.print(dateBuf);
+}
 
-        u8g2.setFont(u8g2_font_helvB24_te);
-        int timeW = u8g2.getUTF8Width(timeBuf);
-        u8g2.setCursor(MARGIN, MARGIN + 28);
-        u8g2.print(timeBuf);
-
-        u8g2.setFont(u8g2_font_helvR14_te);
-        u8g2.setCursor(MARGIN + timeW + 8, MARGIN + 28);
-        u8g2.print(dateBuf);
-    }
-
-    // Weather — top-right corner, large
+static void drawWeather(JsonDocument& doc) {
     const char* weather = doc["weather"] | "";
     if (weather[0] != '\0') {
         u8g2.setFont(u8g2_font_helvB24_te);
-        int tw = u8g2.getUTF8Width(weather);
-        u8g2.setCursor(display.width() - MARGIN - tw, MARGIN + 28);
+        int textWidth = u8g2.getUTF8Width(weather);
+        u8g2.setCursor(display.width() - MARGIN - textWidth, MARGIN + 28);
         u8g2.print(weather);
     }
+}
 
-    y = MARGIN + 36;
+static void drawGroupSeparator(int y) {
+    display.drawFastHLine(MARGIN, y, display.width() - 2 * MARGIN, GxEPD_BLACK);
+    
+    u8g2.setFont(u8g2_font_helvR12_te);
+    const char* minLabel = "min";
+    int labelWidth = u8g2.getUTF8Width(minLabel);
+    u8g2.setCursor(display.width() - MARGIN - labelWidth, y + 12);
+    u8g2.print(minLabel);
+}
+
+static void drawDepartures(JsonObject& dest, time_t now, int baseline) {
+    int times[MAX_TIMES];
+    int count = 0;
+    for (JsonVariant ts : dest["departures"].as<JsonArray>()) {
+        int minutesUntil = (int)((ts.as<int64_t>() - (int64_t)now) / 60);
+        if (minutesUntil >= 0 && count < MAX_TIMES) {
+            times[count++] = minutesUntil;
+        }
+    }
+    if (count == 0) return;
+
+    u8g2.setFont(u8g2_font_helvB24_te);
+    for (int i = 0; i < count; i++) {
+        drawMinutes(COL_T1 + i * COL_T_W, COL_T_W, baseline, times[i]);
+    }
+}
+
+static void drawGroups(JsonDocument& doc, time_t now) {
+    int y = MARGIN + 36;
 
     JsonArray groups = doc["groups"].as<JsonArray>();
     for (JsonObject group : groups) {
         if (y > display.height() - ROW_H_GROUP) break;
 
-        // Group label
         u8g2.setFont(u8g2_font_helvB18_te);
         y += ROW_H_GROUP - 4;
         u8g2.setCursor(MARGIN, y);
         u8g2.print(group["label"].as<const char*>());
+        
         y += 4;
-        display.drawFastHLine(MARGIN, y, display.width() - 2 * MARGIN, GxEPD_BLACK);
+        drawGroupSeparator(y);
         y += 6;
-
-        // "min" label right-aligned just below the separator
-        u8g2.setFont(u8g2_font_helvR12_te);
-        {
-            const char* minLabel = "min";
-            int tw = u8g2.getUTF8Width(minLabel);
-            u8g2.setCursor(display.width() - MARGIN - tw, y + 12);
-            u8g2.print(minLabel);
-        }
 
         for (JsonObject line : group["lines"].as<JsonArray>()) {
             const char* lineNum = line["line"] | "";
@@ -129,40 +135,31 @@ static void drawContent(JsonDocument& doc, time_t now) {
             for (JsonObject dest : line["destinations"].as<JsonArray>()) {
                 if (y > display.height() - ROW_H_MAIN) break;
 
-                int times[MAX_TIMES];
-                int count = 0;
-                for (JsonVariant ts : dest["departures"].as<JsonArray>()) {
-                    int mins = (int)((ts.as<int64_t>() - (int64_t)now) / 60);
-                    if (mins >= 0 && count < MAX_TIMES) {
-                        times[count++] = mins;
-                    }
-                }
-                if (count == 0) continue;
-
                 int baseline = y + ROW_H_MAIN - 8;
 
-                // Line number (bold)
                 u8g2.setFont(u8g2_font_helvB24_te);
                 u8g2.setCursor(COL_LINE, baseline);
                 u8g2.print(lineNum);
 
-                // Destination
                 u8g2.setFont(u8g2_font_helvR24_te);
                 u8g2.setCursor(COL_DEST, baseline);
                 u8g2.print(dest["destination"].as<const char*>());
 
-                // Departure times
-                u8g2.setFont(u8g2_font_helvB24_te);
-                for (int i = 0; i < count; i++) {
-                    drawMinutesU8(COL_T1 + i * COL_T_W, COL_T_W, baseline, times[i]);
-                }
-
+                drawDepartures(dest, now, baseline);
                 y += ROW_H_MAIN;
             }
         }
-
         y += 6;
     }
+}
+
+static void drawContent(JsonDocument& doc, time_t now) {
+    u8g2.setForegroundColor(GxEPD_BLACK);
+    u8g2.setBackgroundColor(GxEPD_WHITE);
+
+    drawHeader(now);
+    drawWeather(doc);
+    drawGroups(doc, now);
 }
 
 static void syncSystemTime(JsonDocument& doc) {
@@ -206,22 +203,7 @@ void updateDisplay(const char* json) {
     display.hibernate();
 }
 
-// --- Main ---
-
-void setup() {
-    Serial.begin(115200);
-    delay(10000);
-    Serial.println("\n=== Trafik Display ===");
-
-    // Power on display
-    pinMode(EPD_PWR, OUTPUT);
-    digitalWrite(EPD_PWR, HIGH);
-
-    // Init SPI and display helper
-    SPI.begin(EPD_SCK, -1, EPD_MOSI, EPD_CS);
-    u8g2.begin(display);
-
-    // Connect WiFi
+static void connectToWiFi() {
     Serial.printf("Connecting to %s", WIFI_SSID);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     while (WiFi.status() != WL_CONNECTED) {
@@ -231,7 +213,7 @@ void setup() {
     Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
 }
 
-void loop() {
+static void fetchDepartures() {
     Serial.println("Fetching departures...");
     HTTPClient http;
     http.begin(BACKEND_URL);
@@ -247,6 +229,23 @@ void loop() {
         Serial.printf("Error: %s\n", http.errorToString(code).c_str());
     }
     http.end();
+}
 
+void setup() {
+    Serial.begin(115200);
+    delay(10000);
+    Serial.println("\n=== Trafik Display ===");
+
+    pinMode(EPD_PWR, OUTPUT);
+    digitalWrite(EPD_PWR, HIGH);
+
+    SPI.begin(EPD_SCK, -1, EPD_MOSI, EPD_CS);
+    u8g2.begin(display);
+
+    connectToWiFi();
+}
+
+void loop() {
+    fetchDepartures();
     delay(60000);
 }
