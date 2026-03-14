@@ -10,7 +10,7 @@
 
 #include "config.h"
 
-GxEPD2_BW<GxEPD2_426_GDEQ0426T82, GxEPD2_426_GDEQ0426T82::HEIGHT / 4> display(
+GxEPD2_BW<GxEPD2_426_GDEQ0426T82, GxEPD2_426_GDEQ0426T82::HEIGHT> display(
     GxEPD2_426_GDEQ0426T82(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
 
 // Send a raw command+data to the display via SPI (bypasses GxEPD2)
@@ -190,13 +190,18 @@ void updateDisplay(const char* json) {
     display.setRotation(0);
     display.setFullWindow();
 
-    // Write image data to RAM (but GxEPD2's refresh will run with 0x21/0x40)
-    display.firstPage();
-    do {
-        drawContent(doc, now);
-    } while (display.nextPage());
+    // 1. Clear the local ESP32 memory buffer
+    display.fillScreen(GxEPD_WHITE);
 
-    // Re-trigger refresh without the "bypass RED" flag
+    // 2. Purely functional drawing step (mutates local RAM only)
+    drawContent(doc, now);
+
+    // 3. Transfer the buffer to the display's onboard SRAM and refresh
+    // NOTE: GxEPD2's display() both transfers and refreshes.
+    display.display(false);
+
+    // 4. Explicitly fire your custom Waveshare hardware update sequence
+    // This re-triggers the refresh with custom flags if needed.
     waveshareRefresh();
 
     display.hibernate();
