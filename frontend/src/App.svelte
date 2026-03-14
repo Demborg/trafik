@@ -18,7 +18,15 @@
     lines: LineView[]
   }
 
+  interface BatteryPoint {
+    v_bat: number
+    p_bat: number
+    timestamp: string
+  }
+
   let groups: GroupView[] = $state([])
+  let batteryPoints: BatteryPoint[] = $state([])
+  let batteryDays = $state(1)
   let weather: string | null = $state(null)
   let error: string | null = $state(null)
   let loading = $state(true)
@@ -62,6 +70,34 @@
     }
   }
 
+  async function fetchBattery() {
+    try {
+      const res = await fetch(`${BACKEND_URL}/battery?days=${batteryDays}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      batteryPoints = await res.json()
+    } catch (e) {
+      console.error('Failed to fetch battery:', e)
+    }
+  }
+
+  // Reactive Sparkline points using Svelte 5 runes
+  const sparklinePoints = $derived.by(() => {
+    if (batteryPoints.length < 2) return ""
+    
+    // Fixed 0-100% Y axis
+    const yMin = 0
+    const yMax = 100
+    const yRange = yMax - yMin
+
+    return batteryPoints
+      .map((p, i) => {
+        const x = (i / (batteryPoints.length - 1)) * 400
+        const y = 60 - ((p.p_bat - yMin) / yRange) * 60
+        return `${x},${y}`
+      })
+      .join(' ')
+  })
+
   function scheduleRefresh(seconds: number) {
     nextRefreshIn = seconds
     const interval = setInterval(() => {
@@ -70,6 +106,7 @@
         clearInterval(interval)
         nextRefreshIn = null
         fetchDepartures()
+        fetchBattery()
       }
     }, 1000)
   }
@@ -77,6 +114,7 @@
   onMount(() => {
     setInterval(() => { now = Math.floor(Date.now() / 1000) }, 1000)
     fetchDepartures()
+    fetchBattery()
   })
 </script>
 
@@ -107,6 +145,37 @@
         {/each}
       </section>
     {/each}
+
+    {#if batteryPoints.length > 0}
+      <section class="battery">
+        <div class="header-with-controls">
+          <h2>Batteri</h2>
+          <div class="controls">
+            {#each [1, 7, 30] as d}
+              <button 
+                class:active={batteryDays === d} 
+                onclick={() => { batteryDays = d; fetchBattery(); }}
+              >
+                {d === 1 ? '24h' : d + 'd'}
+              </button>
+            {/each}
+          </div>
+        </div>
+        <div class="battery-status">
+          <span>{batteryPoints[batteryPoints.length - 1].p_bat}%</span>
+          <span class="voltage">{batteryPoints[batteryPoints.length - 1].v_bat.toFixed(2)}V</span>
+        </div>
+        <svg viewBox="0 0 400 60" class="sparkline">
+          <polyline
+            fill="none"
+            stroke="#888"
+            stroke-width="1.5"
+            stroke-linejoin="round"
+            points={sparklinePoints}
+          />
+        </svg>
+      </section>
+    {/if}
   {/if}
   {#if nextRefreshIn !== null}
     <p class="refresh">uppdatering om {nextRefreshIn}s</p>
@@ -133,9 +202,10 @@
     letter-spacing: 0.1em;
     color: #888;
     margin: 1.5rem 0 0.25rem;
-    border-bottom: 1px solid #ddd;
     padding-bottom: 0.25rem;
   }
+  section h2 { border-bottom: 1px solid #ddd; }
+  .header-with-controls h2 { border-bottom: none; margin: 0; }
   .row {
     display: flex;
     gap: 1rem;
@@ -147,4 +217,43 @@
   .times { margin-left: auto; white-space: nowrap; }
   .error { color: red; }
   .refresh { font-size: 0.75rem; color: #aaa; margin-top: 1.5rem; }
+
+  .battery { margin-top: 1.5rem; }
+  .header-with-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #ddd;
+    margin-top: 1.5rem;
+  }
+  .header-with-controls h2 { padding: 0.5rem 0; }
+  .controls { display: flex; gap: 0.5rem; }
+  .controls button {
+    background: none;
+    border: 1px solid #eee;
+    font-family: monospace;
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    cursor: pointer;
+    color: #888;
+  }
+  .controls button.active {
+    background: #888;
+    color: white;
+    border-color: #888;
+  }
+  .battery-status {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    margin-bottom: 0.25rem;
+  }
+  .voltage { color: #888; }
+  .sparkline {
+    width: 100%;
+    height: 40px;
+    background: #f9f9f9;
+    border: 1px solid #eee;
+    padding: 4px;
+  }
 </style>
