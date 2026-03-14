@@ -1,22 +1,39 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 
+	"cloud.google.com/go/firestore"
 	"github.com/demborg/trafik/backend/internal/handlers"
 	"github.com/demborg/trafik/backend/internal/sl"
 )
 
 func main() {
+	ctx := context.Background()
+	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	if projectID == "" {
+		projectID = "trafik-489043292627"
+	}
+
+	var fs *firestore.Client
+	var err error
+	fs, err = firestore.NewClient(ctx, projectID)
+	if err != nil {
+		log.Printf("failed to initialize firestore client: %v", err)
+	} else {
+		defer fs.Close()
+	}
+
 	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
 	if allowedOrigin == "" {
 		allowedOrigin = "*"
 	}
 
 	client := sl.NewClient()
-	h := handlers.New(client)
+	h := handlers.New(client, fs)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /departures", h.Departures)

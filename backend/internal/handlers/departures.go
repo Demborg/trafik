@@ -5,18 +5,24 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	"github.com/demborg/trafik/backend/internal/sl"
 )
 
 type Handler struct {
-	sl *sl.Client
+	sl        *sl.Client
+	firestore *firestore.Client
 }
 
-func New(client *sl.Client) *Handler {
-	return &Handler{sl: client}
+func New(client *sl.Client, fs *firestore.Client) *Handler {
+	return &Handler{
+		sl:        client,
+		firestore: fs,
+	}
 }
 
 type destinationView struct {
@@ -69,10 +75,23 @@ func typeLabel(tp string) string {
 
 func (h *Handler) Departures(w http.ResponseWriter, r *http.Request) {
 	// Log battery telemetry if provided.
-	vBat := r.URL.Query().Get("v_bat")
-	pBat := r.URL.Query().Get("p_bat")
-	if vBat != "" || pBat != "" {
-		log.Printf("battery telemetry: v_bat=%s, p_bat=%s%%", vBat, pBat)
+	vBatStr := r.URL.Query().Get("v_bat")
+	pBatStr := r.URL.Query().Get("p_bat")
+	if (vBatStr != "" || pBatStr != "") && h.firestore != nil {
+		vBat, _ := strconv.ParseFloat(vBatStr, 64)
+		pBat, _ := strconv.Atoi(pBatStr)
+		log.Printf("battery telemetry: v_bat=%.2fV, p_bat=%d%%", vBat, pBat)
+
+		go func() {
+			_, _, err := h.firestore.Collection("battery_telemetry").Add(r.Context(), map[string]interface{}{
+				"v_bat":     vBat,
+				"p_bat":     pBat,
+				"timestamp": firestore.ServerTimestamp,
+			})
+			if err != nil {
+				log.Printf("failed to log battery telemetry to firestore: %v", err)
+			}
+		}()
 	}
 
 	// Fetch departures and weather concurrently.
