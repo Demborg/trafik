@@ -68,6 +68,13 @@ func typeLabel(tp string) string {
 }
 
 func (h *Handler) Departures(w http.ResponseWriter, r *http.Request) {
+	// Log battery telemetry if provided.
+	vBat := r.URL.Query().Get("v_bat")
+	pBat := r.URL.Query().Get("p_bat")
+	if vBat != "" || pBat != "" {
+		log.Printf("battery telemetry: v_bat=%s, p_bat=%s%%", vBat, pBat)
+	}
+
 	// Fetch departures and weather concurrently.
 	type depResult struct {
 		departures []sl.Departure
