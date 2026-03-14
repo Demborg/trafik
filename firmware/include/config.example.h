@@ -5,7 +5,7 @@
 #define WIFI_PASSWORD "your_password_here"
 
 // URL of the deployed Go backend
-#define BACKEND_URL "https://your-cloud-run-url/departures"
+#define BACKEND_URL "https://trafik-backend-489043292627.europe-north2.run.app/departures"
 
 // E-ink display SPI pins (Waveshare 4.26" 800x480, GxEPD2_426_GDEQ0426T82)
 // Wired to ESP32-C3 SPI2 (FSPI) defaults.
