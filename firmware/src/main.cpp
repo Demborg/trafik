@@ -10,6 +10,10 @@
 
 #include "config.h"
 
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "unknown"
+#endif
+
 #define BAT_SENSE_PIN 3
 
 static float readBatteryVoltage() {
@@ -245,7 +249,7 @@ static void fetchDepartures() {
     Serial.println("Fetching departures...");
     HTTPClient http;
     char url[256];
-    snprintf(url, sizeof(url), "%s?v_bat=%.2f&p_bat=%d", BACKEND_URL, vBat, pBat);
+    snprintf(url, sizeof(url), "%s?v_bat=%.2f&p_bat=%d&version=%s", BACKEND_URL, vBat, pBat, FIRMWARE_VERSION);
     http.begin(url);
     int code = http.GET();
     Serial.printf("HTTP %d\n", code);
