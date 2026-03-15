@@ -12,9 +12,9 @@ import (
 )
 
 type BatteryPoint struct {
-	VBat      float64   `json:"v_bat"`
-	PBat      int       `json:"p_bat"`
-	Timestamp time.Time `json:"timestamp"`
+	VBat      float64   `json:"v_bat" firestore:"v_bat"`
+	PBat      int       `json:"p_bat" firestore:"p_bat"`
+	Timestamp time.Time `json:"timestamp" firestore:"timestamp"`
 }
 
 func (h *Handler) Battery(w http.ResponseWriter, r *http.Request) {

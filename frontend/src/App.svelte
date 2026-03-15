@@ -151,12 +151,12 @@
         <div class="header-with-controls">
           <h2>Batteri</h2>
           <div class="controls">
-            {#each [1, 7, 30] as d}
+            {#each [1, 2, 7, 30] as d}
               <button 
                 class:active={batteryDays === d} 
                 onclick={() => { batteryDays = d; fetchBattery(); }}
               >
-                {d === 1 ? '24h' : d + 'd'}
+                {d === 1 ? '24h' : d === 2 ? '48h' : d + 'd'}
               </button>
             {/each}
           </div>
