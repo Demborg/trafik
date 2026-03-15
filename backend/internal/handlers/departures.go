@@ -82,8 +82,9 @@ func typeLabel(tp string) string {
 func (h *Handler) Departures(w http.ResponseWriter, r *http.Request) {
 	vBat, _ := strconv.ParseFloat(r.URL.Query().Get("v_bat"), 64)
 	pBat, _ := strconv.Atoi(r.URL.Query().Get("p_bat"))
+	version := r.URL.Query().Get("version")
 
-	telemetryDone := h.logTelemetryAsync(vBat, pBat)
+	telemetryDone := h.logTelemetryAsync(vBat, pBat, version)
 	departuresCh := h.fetchDeparturesAsync(r.Context())
 	weatherCh := h.fetchWeatherAsync(r.Context())
 
@@ -111,7 +112,7 @@ func (h *Handler) Departures(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-func (h *Handler) logTelemetryAsync(vBat float64, pBat int) <-chan struct{} {
+func (h *Handler) logTelemetryAsync(vBat float64, pBat int, version string) <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -125,6 +126,7 @@ func (h *Handler) logTelemetryAsync(vBat float64, pBat int) <-chan struct{} {
 		_, _, err := h.firestore.Collection("battery_telemetry").Add(ctx, map[string]interface{}{
 			"v_bat":     vBat,
 			"p_bat":     pBat,
+			"version":   version,
 			"timestamp": firestore.ServerTimestamp,
 		})
 		if err != nil {

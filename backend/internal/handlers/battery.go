@@ -14,6 +14,7 @@ import (
 type BatteryPoint struct {
 	VBat      float64   `json:"v_bat" firestore:"v_bat"`
 	PBat      int       `json:"p_bat" firestore:"p_bat"`
+	Version   string    `json:"version" firestore:"version"`
 	Timestamp time.Time `json:"timestamp" firestore:"timestamp"`
 }
 
