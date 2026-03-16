@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import * as Plot from "@observablehq/plot"
 
   const BACKEND_URL = import.meta.env.VITE_BACKEND_URL
 
@@ -21,6 +22,7 @@
   interface BatteryPoint {
     v_bat: number
     p_bat: number
+    version: string
     timestamp: string
   }
 
@@ -80,22 +82,77 @@
     }
   }
 
-  // Reactive Sparkline points using Svelte 5 runes
-  const sparklinePoints = $derived.by(() => {
-    if (batteryPoints.length < 2) return ""
-    
-    // Fixed 0-100% Y axis
-    const yMin = 0
-    const yMax = 100
-    const yRange = yMax - yMin
+  let chartContainer: HTMLDivElement | undefined = $state()
 
-    return batteryPoints
-      .map((p, i) => {
-        const x = (i / (batteryPoints.length - 1)) * 400
-        const y = 60 - ((p.p_bat - yMin) / yRange) * 60
-        return `${x},${y}`
+  $effect(() => {
+    if (batteryPoints.length > 0 && chartContainer) {
+      const data = batteryPoints.map(p => ({
+        ...p,
+        timestamp: new Date(p.timestamp)
+      }))
+
+      // Prepare data for second Y axis (voltage)
+      const vMin = Math.min(...data.map(d => d.v_bat))
+      const vMax = Math.max(...data.map(d => d.v_bat))
+      const vRange = vMax - vMin || 1
+      
+      const chart = Plot.plot({
+        style: {
+          background: "transparent",
+          fontFamily: "monospace",
+          fontSize: "10px",
+          color: "#444"
+        },
+        height: 180,
+        marginRight: 40,
+        x: {
+          label: null,
+          grid: true,
+          tickFormat: (d: Date) => d.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' })
+        },
+        y: {
+          label: "batteri (%)",
+          domain: [0, 100],
+          grid: true
+        },
+        marks: [
+          Plot.ruleY([0]),
+          Plot.lineY(data, {
+            x: "timestamp",
+            y: "p_bat",
+            stroke: "version",
+            strokeWidth: 2,
+            curve: "step-after"
+          }),
+          Plot.axisY({
+             anchor: "right",
+             label: "volt (V)",
+             ticks: 5,
+             domain: [vMin, vMax],
+             tickFormat: d => d.toFixed(1)
+          }),
+          Plot.lineY(data, {
+            x: "timestamp",
+            y: d => ((d.v_bat - vMin) / vRange) * 100,
+            stroke: "version",
+            strokeWidth: 1,
+            strokeDasharray: "2,2",
+            opacity: 0.5
+          }),
+          Plot.tip(data, Plot.pointer({
+            x: "timestamp",
+            y: "p_bat",
+            title: d => `${d.timestamp.toLocaleString('sv-SE')}\n${d.p_bat}% (${d.v_bat.toFixed(2)}V)\n${d.version || 'unknown'}`
+          }))
+        ],
+        color: {
+          scheme: "Tableau10"
+        }
       })
-      .join(' ')
+
+      chartContainer.innerHTML = ''
+      chartContainer.appendChild(chart)
+    }
   })
 
   function scheduleRefresh(seconds: number) {
@@ -165,15 +222,7 @@
           <span>{batteryPoints[batteryPoints.length - 1].p_bat}%</span>
           <span class="voltage">{batteryPoints[batteryPoints.length - 1].v_bat.toFixed(2)}V</span>
         </div>
-        <svg viewBox="0 0 400 60" class="sparkline">
-          <polyline
-            fill="none"
-            stroke="#888"
-            stroke-width="1.5"
-            stroke-linejoin="round"
-            points={sparklinePoints}
-          />
-        </svg>
+        <div bind:this={chartContainer} class="plot-container"></div>
       </section>
     {/if}
   {/if}
@@ -249,11 +298,14 @@
     margin-bottom: 0.25rem;
   }
   .voltage { color: #888; }
-  .sparkline {
+  .plot-container {
     width: 100%;
-    height: 40px;
-    background: #f9f9f9;
-    border: 1px solid #eee;
-    padding: 4px;
+    margin-top: 0.5rem;
+    background: transparent;
+  }
+  .plot-container :global(svg) {
+    max-width: 100%;
+    height: auto;
+    overflow: visible;
   }
 </style>
