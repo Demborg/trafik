@@ -27,6 +27,10 @@ static int calculateBatteryPercentage(float voltage) {
     return (int)((voltage - 3.30f) / (4.15f - 3.30f) * 100.0f);
 }
 
+RTC_DATA_ATTR static int bootCount = 0;
+RTC_DATA_ATTR static char cachedPayload[4096] = {0};
+RTC_DATA_ATTR static int cyclesUntilNextPoll = 0;
+
 GxEPD2_BW<GxEPD2_426_GDEQ0426T82, GxEPD2_426_GDEQ0426T82::HEIGHT> display(
     GxEPD2_426_GDEQ0426T82(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
 
@@ -52,10 +56,12 @@ static void epdCommand(uint8_t cmd, const uint8_t* data, size_t len) {
     digitalWrite(EPD_CS, HIGH);
 }
 
-static void waveshareRefresh() {
+static void waveshareRefresh(bool partial) {
     while (digitalRead(EPD_BUSY) == HIGH) delay(1);
 
-    uint8_t updateCtrl[] = {0xF7};
+    // 0xF7 is full update, 0xFF is partial/fast update for many Waveshare panels.
+    // GDEQ0426T82 specifically uses 0xF7 for full, and can use 0xFF for fast.
+    uint8_t updateCtrl[] = { (uint8_t)(partial ? 0xFF : 0xF7) };
     epdCommand(0x22, updateCtrl, 1);
     epdCommand(0x20, nullptr, 0);
 
@@ -204,47 +210,37 @@ static void prepareDisplay() {
     display.setFullWindow();
 }
 
-static void renderFrame(JsonDocument& doc, time_t now, float vBat, int pBat) {
+static void renderFrame(JsonDocument& doc, time_t now, float vBat, int pBat, bool isPartial) {
     display.fillScreen(GxEPD_WHITE);
     drawContent(doc, now, vBat, pBat);
-    display.display(false);
-    waveshareRefresh();
-}
-
-void updateDisplay(const char* json, float vBat, int pBat) {
-    if (!json || json[0] == '\0') return;
-
-    JsonDocument doc;
-    if (deserializeJson(doc, json) != DeserializationError::Ok) {
-        Serial.println("JSON parse failed");
-        return;
-    }
-
-    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
-    tzset();
-
-    syncSystemTime(doc);
-    time_t now = time(NULL);
-
-    prepareDisplay();
-    renderFrame(doc, now, vBat, pBat);
-    display.hibernate();
+    display.display(isPartial);
+    waveshareRefresh(isPartial);
 }
 
 static void connectToWiFi() {
     Serial.printf("Connecting to %s", WIFI_SSID);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) {
+    
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
         delay(500);
         Serial.print(".");
     }
-    Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
+    
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
+    } else {
+        Serial.println("\nWiFi connection failed!");
+    }
 }
 
-static void fetchDepartures() {
+static bool fetchDepartures() {
     float vBat = readBatteryVoltage();
     int pBat = calculateBatteryPercentage(vBat);
     Serial.printf("Battery: %.2fV (%d%%)\n", vBat, pBat);
+
+    connectToWiFi();
+    if (WiFi.status() != WL_CONNECTED) return false;
 
     Serial.println("Fetching departures...");
     HTTPClient http;
@@ -254,32 +250,82 @@ static void fetchDepartures() {
     int code = http.GET();
     Serial.printf("HTTP %d\n", code);
 
+    bool success = false;
     if (code == HTTP_CODE_OK) {
         String body = http.getString();
-        Serial.printf("Got %d bytes, updating display...\n", body.length());
-        updateDisplay(body.c_str(), vBat, pBat);
-        Serial.println("Display updated!");
+        if (body.length() < sizeof(cachedPayload)) {
+            strncpy(cachedPayload, body.c_str(), sizeof(cachedPayload) - 1);
+            cachedPayload[sizeof(cachedPayload) - 1] = '\0';
+            success = true;
+        } else {
+            Serial.println("Response too large for cache");
+        }
     } else {
         Serial.printf("Error: %s\n", http.errorToString(code).c_str());
     }
     http.end();
+    WiFi.disconnect(true);
+    return success;
 }
 
 void setup() {
     Serial.begin(115200);
-    delay(10000);
-    Serial.println("\n=== Trafik Display ===");
+    Serial.printf("\n=== Trafik Display (Boot: %d) ===\n", bootCount);
 
-    pinMode(EPD_PWR, OUTPUT);
-    digitalWrite(EPD_PWR, HIGH);
+    bool needsNetwork = (bootCount == 0 || cyclesUntilNextPoll <= 0 || cachedPayload[0] == '\0');
+    bool networkSuccess = false;
 
-    SPI.begin(EPD_SCK, -1, EPD_MOSI, EPD_CS);
-    u8g2.begin(display);
+    if (needsNetwork) {
+        networkSuccess = fetchDepartures();
+        if (!networkSuccess && bootCount == 0) {
+            // Initial boot must have network
+            Serial.println("Initial fetch failed, sleeping...");
+            esp_sleep_enable_timer_wakeup(POLL_FALLBACK_SLEEP_SECONDS * 1000000ULL);
+            esp_deep_sleep_start();
+        }
+    }
 
-    connectToWiFi();
+    JsonDocument doc;
+    if (deserializeJson(doc, cachedPayload) == DeserializationError::Ok) {
+        if (needsNetwork && networkSuccess) {
+            syncSystemTime(doc);
+            int suggested = doc["suggested_sleep_seconds"] | (NETWORK_POLL_EVERY_N_CYCLES * 60);
+            cyclesUntilNextPoll = suggested / 60;
+        } else {
+            cyclesUntilNextPoll--;
+        }
+
+        setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);
+        tzset();
+
+        time_t now = time(NULL);
+        float vBat = readBatteryVoltage();
+        int pBat = calculateBatteryPercentage(vBat);
+
+        pinMode(EPD_PWR, OUTPUT);
+        digitalWrite(EPD_PWR, HIGH);
+        SPI.begin(EPD_SCK, -1, EPD_MOSI, EPD_CS);
+        u8g2.begin(display);
+
+        prepareDisplay();
+        
+        // Full refresh every 10 cycles or on network update to prevent ghosting
+        bool isPartial = (bootCount % 10 != 0) && !needsNetwork;
+        renderFrame(doc, now, vBat, pBat, isPartial);
+        
+        display.hibernate();
+        digitalWrite(EPD_PWR, LOW);
+    } else {
+        Serial.println("JSON parse failed");
+    }
+
+    bootCount++;
+    Serial.printf("Sleeping for %d seconds...\n", DISPLAY_REFRESH_SLEEP_SECONDS);
+    esp_sleep_enable_timer_wakeup(DISPLAY_REFRESH_SLEEP_SECONDS * 1000000ULL);
+    esp_deep_sleep_start();
 }
 
 void loop() {
-    fetchDepartures();
-    delay(60000);
+    // Never reached
 }
+
