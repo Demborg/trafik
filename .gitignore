@@ -6,6 +6,7 @@
 # Go
 backend/vendor/
 
+
 # PlatformIO
 firmware/.pio/
 firmware/.vscode/

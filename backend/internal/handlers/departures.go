@@ -209,6 +209,17 @@ func buildGroups(departures []sl.Departure, now time.Time) []groupView {
 		)
 	}
 
+	for _, g := range groupData {
+		for i := range g.Lines {
+			for j := range g.Lines[i].Destinations {
+				deps := g.Lines[i].Destinations[j].Departures
+				if len(deps) > 3 {
+					g.Lines[i].Destinations[j].Departures = deps[:3]
+				}
+			}
+		}
+	}
+
 	sort.SliceStable(typeOrder_, func(i, j int) bool {
 		pi := typeOrder[strings.ToUpper(typeOrder_[i])]
 		pj := typeOrder[strings.ToUpper(typeOrder_[j])]
@@ -226,7 +237,7 @@ func buildGroups(departures []sl.Departure, now time.Time) []groupView {
 // waking a couple of minutes before the next departure.
 func suggestedSleep(groups []groupView, now time.Time) int {
 	const (
-		minSleep     = 30
+		minSleep     = 60
 		maxSleep     = 600
 		wakeAheadSec = 2 * 60
 	)

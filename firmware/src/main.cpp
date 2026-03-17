@@ -47,28 +47,6 @@ static const int ROW_H_MAIN    = 54;
 static const int ROW_H_GROUP   = 40;
 static const int MAX_TIMES     = 3;
 
-static void epdCommand(uint8_t cmd, const uint8_t* data, size_t len) {
-    digitalWrite(EPD_CS, LOW);
-    digitalWrite(EPD_DC, LOW);
-    SPI.transfer(cmd);
-    digitalWrite(EPD_DC, HIGH);
-    for (size_t i = 0; i < len; i++) SPI.transfer(data[i]);
-    digitalWrite(EPD_CS, HIGH);
-}
-
-static void waveshareRefresh(bool partial) {
-    while (digitalRead(EPD_BUSY) == HIGH) delay(1);
-
-    // 0xF7 is full update, 0xFF is partial/fast update for many Waveshare panels.
-    // GDEQ0426T82 specifically uses 0xF7 for full, and can use 0xFF for fast.
-    uint8_t updateCtrl[] = { (uint8_t)(partial ? 0xFF : 0xF7) };
-    epdCommand(0x22, updateCtrl, 1);
-    epdCommand(0x20, nullptr, 0);
-
-    delay(100);
-    while (digitalRead(EPD_BUSY) == HIGH) delay(10);
-}
-
 static void drawMinutes(int x, int w, int y, int minutes) {
     char label[16];
     if (minutes == 0) {
@@ -214,7 +192,6 @@ static void renderFrame(JsonDocument& doc, time_t now, float vBat, int pBat, boo
     display.fillScreen(GxEPD_WHITE);
     drawContent(doc, now, vBat, pBat);
     display.display(isPartial);
-    waveshareRefresh(isPartial);
 }
 
 static void connectToWiFi() {
@@ -247,6 +224,8 @@ static bool fetchDepartures() {
     char url[256];
     snprintf(url, sizeof(url), "%s?v_bat=%.2f&p_bat=%d&version=%s", BACKEND_URL, vBat, pBat, FIRMWARE_VERSION);
     http.begin(url);
+    http.setTimeout(10000);
+    
     int code = http.GET();
     Serial.printf("HTTP %d\n", code);
 
@@ -258,7 +237,7 @@ static bool fetchDepartures() {
             cachedPayload[sizeof(cachedPayload) - 1] = '\0';
             success = true;
         } else {
-            Serial.println("Response too large for cache");
+            Serial.printf("Response too large for cache (%d bytes)\n", body.length());
         }
     } else {
         Serial.printf("Error: %s\n", http.errorToString(code).c_str());
@@ -270,7 +249,7 @@ static bool fetchDepartures() {
 
 void setup() {
     Serial.begin(115200);
-    Serial.printf("\n=== Trafik Display (Boot: %d) ===\n", bootCount);
+    Serial.printf("\n=== Trafik Display (Boot: %d, Cycle: %d) ===\n", bootCount, cyclesUntilNextPoll);
 
     bool needsNetwork = (bootCount == 0 || cyclesUntilNextPoll <= 0 || cachedPayload[0] == '\0');
     bool networkSuccess = false;
@@ -291,6 +270,11 @@ void setup() {
             syncSystemTime(doc);
             int suggested = doc["suggested_sleep_seconds"] | (NETWORK_POLL_EVERY_N_CYCLES * 60);
             cyclesUntilNextPoll = suggested / 60;
+            Serial.printf("Network sync ok, next poll in %d cycles\n", cyclesUntilNextPoll);
+        } else if (needsNetwork && !networkSuccess) {
+            // Network failed, retry sooner
+            cyclesUntilNextPoll = 1; 
+            Serial.println("Network failed, retrying next cycle");
         } else {
             cyclesUntilNextPoll--;
         }
@@ -309,14 +293,18 @@ void setup() {
 
         prepareDisplay();
         
-        // Full refresh every 10 cycles or on network update to prevent ghosting
-        bool isPartial = (bootCount % 10 != 0) && !needsNetwork;
+        // Full refresh every 30 cycles (30 min) to prevent ghosting
+        bool isPartial = (bootCount % 30 != 0);
+        Serial.printf("Rendering (partial=%d)\n", isPartial);
         renderFrame(doc, now, vBat, pBat, isPartial);
         
         display.hibernate();
         digitalWrite(EPD_PWR, LOW);
     } else {
         Serial.println("JSON parse failed");
+        // Clear cache to force retry
+        cachedPayload[0] = '\0';
+        cyclesUntilNextPoll = 0;
     }
 
     bootCount++;
